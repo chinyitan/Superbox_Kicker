@@ -1,0 +1,4 @@
+This is a brief description of the basic use of superbox
+
+There are a few key subroutines
+* super.cb  where one can choose the number of cells per box (N=2**m)

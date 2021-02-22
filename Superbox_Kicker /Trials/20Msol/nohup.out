@@ -1,0 +1,10 @@
+
+Program received signal SIGSEGV: Segmentation fault - invalid memory reference.
+
+Backtrace for this error:
+#0  0x7F7B0FC216D7
+#1  0x7F7B0FC21D1E
+#2  0x7F7B0F11C3FF
+#3  0x4082D7 in out_time_
+#4  0x4074EC in master_
+#5  0x416A0A in MAIN__ at super.F:?

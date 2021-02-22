@@ -1,0 +1,152 @@
+c
+c     in this file all variables used in different routines and all
+c     common blocks are defined
+c
+c     first you have to determine the main parameters of SUPERBOX:
+c
+c     numstars : maximum number of all stars of all galaxies 
+c                for the simulation
+c     n        : number of mesh-points per grid (note: n = 2**m !)
+c     m        : see above (please change only m)
+c     mg       : maximum number of galaxies to be computed
+c                (should be 2 or more)
+c     hlen     : number of real figures in the output file per step
+c                (written in xxx.HEAD)
+c     hleni    : length of output record for moment of inertia
+c     hlend    : length of output record for velocity dispersion
+
+      implicit none
+					
+      integer   lori            ! length of real, integer (byte)
+      integer   numstars,m,n,mg, unit, isign 
+      integer   hlen,hleni,hlend
+
+      parameter (lori = 4, unit = 78 )
+      parameter (numstars = 4e6 , m = 6 , n = 2**m , mg = 2)
+      parameter (hlen = 60 , hleni = 17 , hlend = 17 )
+
+c     defining all main variables:
+
+c     Name of the simulation :
+
+      character fname*100, units*6 
+
+c     Array of the positions and velocities of all stars :
+
+      real*4      star(6,numstars)
+
+c	Energia / age
+      real*4 de(4,numstars),tm(numstars),dv2(numstars)
+      real*4 tide(6,numstars),tidea(6,numstars)
+      integer ibound(numstars)
+
+c     Array for the mass-densities or potential :
+c     Array for the maximum averaged grid density (5 levels) for t-steps :
+      
+      real*4      rho(0:n-1,0:n-1,0:n-1,5),rhomax(mg,5)
+
+c     Array for the fourier-transformed Greens-function :
+
+      real*4      h(0:n,0:n,0:n), hp(0:n,0:n,0:n) 
+
+c     Arrays for the input and output of data :
+
+      integer   ih(60)
+      real*4    fh(60,mg),outhead(hlen,mg)
+      integer   tfreq(mg),tstart(mg),tstop(mg),tstep
+      integer   output,backup
+
+c     Number of galaxies :
+
+      integer   gnum
+
+c     Arrays of center of mass ond center of density :
+
+      real*4    gcms(6,mg),dgcms(6,mg),tcms(6),hcms(6,mg)
+      integer   origin  ! determines where the grids focussed on
+
+c     Arrays of the grids-data
+
+      real*4      rcore(mg),rout(mg),rsystem(mg)
+      real*4      enh1(mg),enh2(mg),enh3(mg),enh4(mg),enh5(mg)
+
+c     Arrays of mass and time for each galaxy :
+
+      real*4      dt(mg),ctime(mg),halfdt(mg,2)
+      real*4      dtcheck, dtcheck_ref,alpha
+      real*4      mass(mg),mtot(mg),tmass
+
+c     Arrays of the number of stars of each galaxy :
+
+      integer   gstno(mg),grest(mg),istno
+
+c     Variables of transforming units :
+
+      real*4    pumass,pulength,putime
+      real*4    scm,scl,sct,scv, kmspcy, gp 
+      integer   model, unitl 
+      character rpc*4, munit*5, tunit*5
+
+c     Variables of energy :
+
+      real*4      gekin(mg),gepot(mg),ekin,epot
+
+c     Variables for angular momentum :
+
+      real*4      lgx(mg),lgy(mg),lgz(mg),lx,ly,lz
+
+c     Variables for moment of inertia, velocity dispersion etc.
+
+      real*4    rmaxi(mg),rmaxd(mg)
+      real*4    epsilon, eps  
+      integer   tifreq(mg),tdfreq(mg)
+      integer   frmaxi(mg),frmaxd(mg)
+      data      eps, epsilon /1.00, 0.005/ 
+
+c     Arrays and variables of constants, etc.
+
+      integer*1 cflag(numstars)
+      integer   flag,n2p3
+      real*4    theta,wpr,wpi,c1,c2,pi
+      real*4    wr(256),wi(256),wr1(n/2+1),wi1(n/2+1)
+
+
+c     Arranging the arrays and variables in common-blocks :
+
+      common /model/ fname
+      
+      common /main1/ star,de,tm,dv2
+      common /main2/ rho,h,rhomax
+      common /main3/ mass,mtot,tmass,dt,ctime,gstno,grest,gnum,istno
+      common /main4/ gcms,dgcms,tcms,hcms,origin
+      common /main5/ gekin,gepot,epot,ekin
+      common /main6/ lgx,lgy,lgz,lx,ly,lz
+
+      common /lagtime/ halfdt
+
+      common /grid1/ rcore,rout,rsystem
+      common /grid2/ enh1,enh2,enh3,enh4,enh5
+
+      common /scales/ scl,scm,sct,scv,gp,kmspcy, 
+     &                model, unitl, tunit,munit,rpc  
+
+      common /iout1/ fh,ih,outhead,output,backup
+      common /iout2/ tfreq,tstart,tstop,tstep
+      common /iout3/ tifreq,tdfreq,frmaxi,frmaxd,rmaxi,rmaxd
+
+      common /else1/ flag,wr,wi,wr1,wi1,theta,wpr,wpi,c1,c2,pi,n2p3
+      common /else2/ cflag
+
+**********************************************************************
+
+
+
+
+
+
+
+
+
+
+
+

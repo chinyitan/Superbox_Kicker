@@ -1,0 +1,58 @@
+c      
+c******************************************************************
+c
+c     Creating the star-data file name with the stepnumber
+c
+      subroutine makename (fname,lfname,step,ign,ierr)
+c      
+      character*100 fname,lfname
+      integer       ind(7),step,ign,izero,istep,ierr,i,j,ir
+c      
+      do i = 1,100
+         lfname(i:i) = ' '
+      enddo
+c
+      ind(1) =1000000
+      ind(2) = 100000
+      ind(3) =  10000
+      ind(4) =   1000
+      ind(5) =    100
+      ind(6) =     10
+      ind(7) =      1
+      izero  =      0
+      istep  = step
+c      
+      do i = 1,100
+         if (fname(i:i) .eq. ' ') goto 10
+         lfname(i:i) = fname(i:i)
+      enddo
+c
+      ierr = 1
+c
+      goto 11
+c
+ 10   lfname(i:i) = '-'
+      lfname(i+1:i+1) = 'g'
+c
+      if (ign .lt. 10) then
+         write (lfname(i+2:i+2),'(i1)') izero
+         write (lfname(i+3:i+3),'(i1)') ign
+      else
+         write (lfname(i+2:i+3),'(i2)') ign
+      endif
+c
+      lfname(i+4:i+4) = '.'
+c
+      do j = 1,7
+         ir = istep / ind(j)
+         write (lfname(i+4+j:i+4+j),'(i1)') ir
+         istep = istep - ir*ind(j)
+      enddo
+c
+      ierr = 0
+c
+ 11   continue
+c      
+      return
+c
+      end

@@ -1,0 +1,124 @@
+This is a brief description of the basic use of superbox
+
+There are a few key subroutines
+* super.cb  where one can choose the number of cells per box (N=2**m) and the maximum number of galaxies in the simulation (mg)
+
+* pusher1.f In this file one can define the external force and potential (subroutine force) acting on the model N-body particles (here i include forced, which calculates the force+potential of a Miyamoto-Nagai disc, forceb, which calculates the force+potential of a Hernquist (1990, ApJ 356, 359) spherical bulge; and force_an, which calculates the force and potential of a spherical Navarro,Frenk and White (1997 ApJ 490, 493) dark matter halo. The parameters of the external potentials are determined in the subroutine param
+
+The code reads models with extension .CONT, and upgrades this file after each time-step. This is a binary file with a definite structure. The first line contains 60 integers, and the second line 60 real*4. This is the description
+
+      open (2,file=name,access='direct',
+     $     recl=240)
+
+c     HEADER
+      ih(1) = 1                 ! number of galaxies
+      ih(2) = nb                ! number of particles
+      ih(3)=0                   !tiempo a 0
+      ih(4)=nt               ! last integration step
+      ih(5)=1                   ! physical units (0) or model (1) 
+      ih(6)=1                   !c.o.d
+      ih(7)=50                   !save data each ih(7) steps
+      ih(8) = 0                 ! no sticky particle code
+      ih(9) = 0                 ! no black hole code : = 0 no BH. 
+      ih(10)= 0 
+      ih(11)= 0                 ! flag for comoving (1) or fixed (0) coord.
+      ih(12)= 0                 ! constant (0) or adjustable (1) dt 
+      ih(13)= 1                 ! unit length = pc (0) or kpc (1) 
+
+      do i = 14,60
+         ih(i) = 0! 	rest of lines not used       
+      enddo
+
+      write(2,rec=1) ih
+
+c     reescalando la grid
+      fh(1)=drp*2. !inner grid size (in units 0f drp, the galaxy core radius)
+      fh(2)=drp*12.!intermediate grid size 
+      fh(3)=500.   ! outer grid size, the Universe
+      fh(4)= real(  drp**(3./2.)/sqrt(dmp)/100.   )! time step
+c     cambiando masa
+      fh(5) =real(dmp) !mass
+      fh(52)=real(dmp) ! mass
+      fh(6) = real(nb)     ! number of particles (this galaxy)
+      fh(7) = real(nb)     ! number of particles left      
+      do j = 1,6
+         fh( 7+j) = 0.d0      ! center of mass and velocity
+         fh(13+j) = 0.d0      ! focus of grids (center of mass)
+      end do
+      fh(20) = 0.0              ! current time 
+      fh(21) = 0.0              ! don't save any star data
+      fh(22) = 0.0
+      fh(23) = 0.0
+      fh(24) = 0.0              ! don't calculate moment of interia
+      fh(25) = 0.0
+      fh(26) = 0.0
+      fh(27) = 0.0              ! don't calc. velocity dispersion
+      fh(28) = 0.0
+      fh(29) = 0.0
+      fh(30) = 0.0              ! don't calculate angular momentum
+      fh(31) = 0.0
+      fh(32) = 0.0
+
+      fh(33) = 0.0              ! number of stickies (this galaxy)
+      fh(34) = 0.0              ! multiplier for sticky grid
+      fh(35) = 0.0              ! multiplier for deadtime
+      fh(36) = 0.0              ! multiplier for rad. inelasticity
+      fh(37) = 0.0              ! multiplier for tang. inelasticity
+      fh(38) = 0.0              ! maximum collision distance
+
+      fh(39) = 0.0              ! empty
+
+      fh(40) = 0.0              ! reserved for black hole data
+      fh(41) = 0.0
+      fh(42) = 0.0
+      fh(43) = 0.0
+      fh(44) = 0.0
+      fh(45) = 0.0
+      fh(46) = 0.0
+      fh(47) = 0.0
+      fh(48) = 0.0
+      fh(49) = 0.0
+      fh(50)  = 0.0 
+      fh(51) = 1.
+      fh(53) = 1.
+      fh(54) = 1. 
+      fh(55) = 1.
+      fh(56) = 1. 
+      fh(57) = 1.
+      fh(58) = 1. 
+      fh(59) = 1. 
+      fh(60) = 1. 
+
+     do i=1,ngalaxies
+         write(2,rec=1+i) fh
+      enddo
+      close(2)
+
+The following lines should provide the position and velocity vector (6 real*4 numbers) of each N-body particle (of a single galaxy, i.e. ngalaxies=1) of a total of nb.
+
+c     PARTICLES
+      open (2,file=name,access='direct',recl=24)
+
+      do i=1,nb
+         xx(i)=rad(1,i)*dr
+         yy(i)=rad(2,i)*dr
+         zz(i)=rad(3,i)*dr
+
+         uu(i)=vel(1,i)*dv *sqrt(2.)
+         vv(i)=vel(2,i)*dv *sqrt(2.)
+         ww(i)=vel(3,i)*dv *sqrt(2.)
+
+         write(2,rec=10+ngalaxies*10+i)
+     &        xx(i),yy(i),zz(i),uu(i),vv(i),ww(i)   
+      enddo
+      close(2)
+
+Note the sqrt(2) multiplying the velocities. This is due to the (unfortunate) choice of G=2 in superbox (originally this was chosen to speed up the calculations...now it is just annoying). Note also dr, and dv, which convert physical into N-body units. For galaxies the following units are useful
+
+Munit=5.6e10 Msol
+runit=3.5 kpc
+vunit=262. km/s
+tunit=0.013 Gyr
+
+*wsdata.f Sanpshots are written by the sbroutine wsdata.f. Here I have chosen to write the position/velocty vectors, the kinetic plus potential energy in the satellite (de(1,i),de(2,i)) and host galaxy (de(3,i),de(4,i) frames. tm(i) is the time since the particle becomes unbound from the satellite, and the 6 following numbers is the position+velocity vector of the satellite.
+

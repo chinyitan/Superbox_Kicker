@@ -1,0 +1,824 @@
+c
+c     VERSION 3.0   VERSION 3.0   VERSION 3.0  VERSION 3.0
+c
+c     The following files belong to this program :
+c      1. super.f
+c      2. fft.f
+c      3. getrho.f
+c      4. getxx.f
+c      5. geth.f
+c      6. pusher.f
+c      7. eval.f
+c      8. iofunc.f
+c     10. super.cb (includes all common blocks)
+c
+c
+      program superb
+c
+      include 'super.cb'
+c
+      integer    i,j,l,nh, io_stat  
+      integer    cstep,mstep
+      real       pinh,w1,w2
+      real       rho1_ref, rho1, dummy  
+      real       dt_check
+      character  version*50,comline*50,logfile*100
+      character  expon1*100,expon*6
+      logical    ex 
+c
+      version = '3.0'
+c
+      do i = 1,100
+         fname(i:i)   = ' '
+         logfile(i:i) = ' '
+      enddo
+c
+c     Read name of simulation out of file 'name.inp' :
+c     ============================================
+c
+      open (98,file='name.inp')
+      read (98,'(a)') fname
+      close (98)
+c
+      if (fname(1:1) .eq. ' ') call out_error (100)
+      comline = fname
+c
+c     Open log-file for information about the simulation run :
+c     ========================================================
+c
+      call makeext (fname,logfile,'.log') 
+c++     new addition compatible with fortran 90 : (rid of 'append')
+#ifdef FORT90  
+      inquire (file=logfile,exist=ex)     
+       if( ex .eqv. .true. ) then
+c       Forward to end-of-file 
+       open(unit,file=logfile,access='sequential',status='old')
+90210  read(unit,*, iostat=io_stat,err = 90210, end = 90211 ) dummy 
+       if( io_stat .ge. 0 ) go to 90210 
+90211  backspace unit 
+      else 
+       open (unit,file=logfile,access='sequential',status='new')
+      endif 
+#else
+       open(unit,file=logfile,access='append',status='unknown') 
+#endif 
+c++ 
+c
+c     Read data of simulation out of xxx.CONT file :
+c     ==============================================
+c
+      call rdata        ! see: iofunc.f
+                        ! data is stored in :
+                        ! ih(60) : data for all galaxies
+                        ! fh(60,gnum) : data for each galaxy
+c
+c     Integer-Header, the same for all galaxies :
+c     ===========================================
+c
+      gnum   = ih(1)    ! number of galaxies
+      istno  = ih(2)    ! total number of stars
+      cstep  = ih(3)+1  ! current integrationstep
+      mstep  = ih(4)    ! last integrationstep
+      model  = ih(5)    ! 0 physical units; 1 model units
+      origin = ih(6)    ! 0 center of mass; 1 center of density
+      tstep  = ih(7)    ! > 0 Save ih(7)'th step *.CONT data
+      backup = ih(10)   ! flag for additional backup-files
+c
+      if (cstep .ge. mstep) call out_error (101)
+c
+c     Real-Header, for each individual galaxy :
+c     =========================================
+c
+      do i = 1,gnum
+c
+         rcore(i)   = fh(1,i)       ! radius inner grid
+         rout(i)    = fh(2,i)       ! radius medium grid
+         rsystem(i) = fh(3,i)       ! radius outer grid
+c
+c     note: fh(3) should be the same for all galaxies
+c
+         dt(i)      = fh(4,i)       ! timestep for galaxy i
+c++     write out dt(i) 
+         write( 6,* ) ' Initially dt = ', dt(i) 
+c
+c     note: fh(4) should be the same for all galaxies
+c
+c     For varying time-steps: split dt evenly and store: 
+c 
+         if (ih(12).GT.0) then
+           halfdt(i,1) = dt(i)/2.
+           halfdt(i,2) = dt(i)/2.
+         else 
+           halfdt(i,1) = 0.
+           halfdt(i,2) = 0.
+         end if
+c
+         mtot(i)    = fh(5,i)       ! total mass of galaxy i
+         gstno(i)   = int(fh(6,i))  ! number of stars in galaxy i
+         grest(i)   = int(fh(7,i))  ! stars left in simulation
+c
+         do j = 1,6
+            gcms(j,i)  = fh(7+j,i)  ! center of mass
+            dgcms(j,i) = fh(13+j,i) ! center of density
+         enddo
+c
+         ctime(i)   = fh(20,i)      ! current time
+c
+c     data for additional output
+c
+         tfreq(i)   = int(fh(21,i)) ! > 0 save data every tfreq'th 
+                                    ! step
+         tstart(i)  = int(fh(22,i)) ! first star to be saved
+         tstop(i)   = int(fh(23,i)) ! last star to be saved
+
+         tifreq(i)  = int(fh(24,i)) ! > 0 calculate itens
+         frmaxi(i)  = int(fh(25,i)) ! if 1 ramxi in kpc else rmaxi 
+                                    ! in % of all stars in galaxy i
+         rmaxi(i)   =      fh(26,i) ! rmax for itens
+
+         tdfreq(i)  = int(fh(27,i)) ! > 0 calculate dtens
+         frmaxd(i)  = int(fh(28,i)) ! if 1 rmaxd in kpc else rmaxd 
+                                    ! in % of all stars in galaxy i
+         rmaxd(i)   =     fh(29,i)  ! rmax for dtens
+c
+         if (gstno(i).gt.0) mass(i) = mtot(i) / real(gstno(i))
+                                    ! mass of single star
+c
+         if (dt(i) .le. 0.0) call out_error (102)
+c
+      enddo
+c
+      flag = 0
+c
+c     Transformation from physical- or model-units in internal units :
+c     ================================================================
+c
+c     physical units are given in : v = km/s  l = kpc  m = m(sun)
+c     please note : g = 2 in internal-units !!!!!
+c
+      pumass   = mtot(1)
+      pulength = rcore(1)
+      putime   = sqrt((pulength*1000.0)**3 / (2.2489e-15*pumass))
+c
+c++     write out dt(i) 
+         write( 6,* ) ' Before convert,  dt = ', dt(1)
+      if (model .eq. 0) then    ! transform into model units
+         call convert (0)
+      else                      ! no transformation is required
+         scl = 1.0
+         sct = 1.0
+         scv = 1.0
+         scm = 1.0
+      endif
+c
+c     Setting up grid parameters :
+c     ============================
+c
+      do i = 1,gnum
+         enh1(i) = (n/2-2) / rout(i)
+         enh2(i) = (n/2-2) / rout(i)
+         enh3(i) = (n/2-2) / rcore(i)
+         enh4(i) = (n/2-2) / rsystem(i)
+         enh5(i) = (n/2-2) / rsystem(i)
+      enddo
+c
+c     Generating log-file :
+c     =====================
+c
+c++     write out dt(i) 
+         write( 6,* ) ' Before ppara,  dt = ', dt(1)
+      call ppara (version,comline)
+c
+c     Initialisation of all constants and variables :
+c     ===============================================
+c
+      pi     = 4. * atan(1.)
+      nh     = n/2
+      pinh   = pi / real(nh)
+      w1     =  cos(pinh)
+      w2     = -sin(pinh)
+      wr(1)  = 1.
+      wi(1)  = 0.
+c
+      do j = 2,nh
+         l      = j-1
+         wr(j)  = w1*wr(l) - w2*wi(l)
+         wi(j)  = w2*wr(l) + w1*wi(l)
+      enddo
+c
+      theta  =  -(pi) / real(n)
+      wpr    =  -2. * sin(0.5*theta) * sin(0.5*theta)
+      wpi    =  sin(theta)
+      wi1(2) = wpi
+      wr1(2) = 1.0 + wpr
+c
+      do i = 3,(nh+1)
+         wr1(i) = wr1(i-1)*wpr - wi1(i-1)*wpi + wr1(i-1)
+         wi1(i) = wi1(i-1)*wpr + wr1(i-1)*wpi + wi1(i-1)
+      enddo
+c
+      n2p3   =  2*n+3
+      c1     =  0.5
+      c2     =  0.5
+c      
+      output = 0
+c
+      tmass = 0.0
+      do j = 1,6
+         tcms(j) = 0.0
+      enddo
+      do i = 1,gnum
+         tmass = tmass + mass(i)*grest(i)
+         do j = 1,6
+            tcms(j) = tcms(j) + mass(i) * grest(i) * gcms(j,i)
+         enddo
+      enddo
+      do j = 1,6
+         tcms(j) = tcms(j) / tmass
+      enddo
+c
+c     Now start the Main program :
+c     ============================
+c
+      call master (cstep,mstep)       ! this is the main program
+c
+c     Save all data after the last step is reached :
+c     ==============================================
+c
+      if (flag .ne. 1) then
+         if (model .eq. 0) call convert (1)
+         call wdata             ! see: iofunc.f
+      endif
+c
+      close (unit)
+c
+      end
+c
+c******************************************************************
+c
+c     Main program
+c
+      subroutine master (cstep,mstep)
+c
+      include 'super.cb'
+c
+      integer   i,j,k
+      integer   step,cstep,mstep
+      real      time1,time2,t1,t2,tr,tf,tp
+      real      dt_check
+      real      rhomax_ref, rho1 
+c
+c     Be sure you have removed the stop file, otherwise the
+c     program will stop after one single step !
+c
+c     Fourier-transformation of the Greensfunction:
+c     =============================================
+c
+      tr=0.0
+      tf=0.0
+      tp=0.0
+c      call CPU_TIME(t1)
+      call geth                  ! transformation of the Greensfunct.
+c      call CPU_TIME(t2)         ! see: geth.f and fft.f
+c      t2=t2-t1                  ! this is done only once at the
+c      write(unit,'(a,f20.10,a)')  ! beginning of the simulation
+c     $     'geth:',t2,' sec'    ! and stored in the array h
+c
+c     Set the focus of the grids :
+c     ============================
+c
+c++     write out dt(i) 
+         write( 6,* ) ' In master dt = ', dt(1)
+      if (origin .eq. 0) then   ! focus is on center of mass
+         do i = 1,gnum
+            do j = 1,6
+               dgcms(j,i) = gcms(j,i)
+            enddo
+         enddo
+      else                      ! focus is on center of density
+         call getflags (dgcms)  ! see: pusher.f
+      endif                     ! Be careful: This is an iteration
+c                               ! process and can stop the program
+c
+c       Obtain reference grid-averaged densities : find maximum value;
+c       for variable time-step.
+c
+      rhomax_ref = -1. 
+c
+      do k = 1,gnum  
+         if (gstno(k) .gt. 0) call getrho (k) 
+
+         do j = 1,5 
+          rhomax_ref = max(rhomax_ref,rhomax(k,j))
+         end do  
+      end do 
+c
+c       Check if user-defined time-step is reasonable: Use etimate
+c       of crossing time tcr = SQRT(3pi/(16Grho)); G==2. !!
+c
+c       G*rho, G=4.4991E-11 kpc^3/(Msun Myr^2)
+
+c++     Changes - define a timestep using model or physical units: 
+c       (cmb 04.03.1999). 
+
+      if( model .gt. 0.5 ) then 
+         ! Compute a crossing time in model units : 
+      dt_check = sqrt( 3.*pi / 32. / rhomax_ref ) 
+      else 
+         ! Compute the same quantity in physical units : 
+      dt_check = 4.4991E-11*(rhomax_ref/ scm) * scl**3
+      dt_check = SQRT(0.294524 / dt_check) ! * sct
+c      dt_check = sqrt( 3.*pi / 32. / rhomax_ref ) / sct       
+      endif 
+c
+c       play it safe: divide by arbitrary factor '5' 
+      dt_check = dt_check/5.
+
+      units = ' m.u.'  
+      if( model .lt. 0.5 ) units = ' Myr' 
+
+      write(6,* ) 
+      write(6,90210)
+     +     ' SUPERBOX proposes time step: ',dt_check, units
+      write(6,90210) ' User had input: ', dt(1), units
+      if (model .gt. 0.5 ) dt(1) = min(dt_check, dt(1) )
+      write(6,90211)
+     +     ' Using dt= ',dt(1), units
+     
+c     Starting the simulation :
+c     =============================
+c
+c      call CPU_TIME(time1)
+c
+      do step = cstep,mstep     ! begin of the time-step loop
+c     
+c     Initialize some variables :
+c     ===========================
+c
+         ekin  = 0.0            ! total kin. energy
+         epot  = 0.0            ! total pot. energy
+         lx    = 0.0            ! total angular momentum in x
+         ly    = 0.0            ! total angular momentum in y
+         lz    = 0.0            ! total angular momnetum in z
+c
+         do i = 1,gnum
+            do j = 1,6
+               hcms(j,i) = 0.0
+            enddo
+            gekin(i) = 0.0      ! kin. energy of galaxy i
+            gepot(i) = 0.0      ! pot. energy of galaxy i
+            lgx(i)   = 0.0      ! angular mom. in x of gal. i
+            lgy(i)   = 0.0      ! angular mom. in y of gal. i
+            lgz(i)   = 0.0      ! angular mom. in z of gal. i
+         enddo
+c
+c     Start the galaxy loop of each step :
+c     ====================================
+c
+         do k = 1,gnum         ! begin galaxy-loop
+c
+c     Get the mass-density in each mesh-point for all 5 grids 
+c     of galaxy k :
+c     =======================================================
+c
+c            call CPU_TIME(t1)
+            if (gstno(k) .gt. 0) call getrho (k) ! see: getrho.f
+c            call CPU_TIME(t2)
+c            tr=tr+t2-t1
+c
+c     Calculating the potential of galaxy k for all 5 grids :
+c     =======================================================
+c
+c     via discrete fast fourier transformation
+c
+c            call CPU_TIME(t1)
+            call getpxx (1)     ! see: getxx.f and fft.f
+            call getpxx (2) 
+            call getpxx (3) 
+            call getpxx (4)
+            call getpxx (5)
+c            call CPU_TIME(t2)
+c            tf=tf+t2-t1
+c
+c     Calculating the acceleration for each particle of all galaxies
+c     out of the potential of galaxy k and update the velocities :
+c     ==============================================================
+c
+c     via discrete differentiating the potential in the neighbouring 
+c     mesh-points to second order and updating the velocities of all 
+c     particles via leap-frog integration
+c
+c            call CPU_TIME(t1)
+c
+c     Compute the new timestep : 
+c
+            if (ih(12).GT.0) then
+              dt(k) = halfdt(k,1) + halfdt(k,2) 
+            end if
+c
+            call pusher1 (k,step) ! see: pusher.f
+c            call CPU_TIME(t2)
+c            tp=tp+t2-t1
+c     
+         enddo                  ! end galaxy-loop
+c
+c       Skip timestep adjustment unless allowed.
+c
+         if (ih(12).GT.0) then
+c
+c       Choose new timestep according to local density maximum, 
+c       if want variable time step (note that an input time step 
+c       is required) :
+c
+              rho1 = -1. 
+              do k = 1,gnum       ! For each galaxy 
+                 do j = 1,5       ! for each grid 
+                   rho1 = max( rho1, rhomax(k,j) )
+                 end do 
+              end do 
+c       Factor by how much maximum density has changed :
+              alpha = rhomax_ref / rho1
+              rhomax_ref = rho1 
+              do k = 1,gnum 
+c       Upper and lower bounds on dt :
+                if(halfdt(k,2).gt.fh(31,k).and.
+     +           halfdt(k,2).lt.fh(30,k)) then
+                   halfdt(k,2) = halfdt(k,2) * sqrt(alpha) 
+c       The new time=step; also ensure it is stored in fh(4,k):
+                   dt(k) = halfdt(k,1) + halfdt(k,2) 
+                   fh(4,k) = dt(k)
+#ifdef FORT90 
+                   write(unit,'(a,es8.2,1x,es8.2,a,I6)')
+#else 
+                   write(unit,'(a,e8.3,1x,e8.3,a,I6)')
+#endif 
+     &             ' new times-step [mu,Myr] ', fh(4,k),fh(4,k)/sct,
+     &             ' at step ', step
+                end if
+              end do 
+c
+        end if         ! Conditional timestep adjustment : close 
+c
+c     Updating the positions of all particles of all galaxies :
+c     =========================================================
+c
+c     via leap-frog integration and collecting all output data :
+c     
+c         call CPU_TIME(t1)
+         call pusher2 (step)    ! see: pusher.f and iofunc.f 
+c         call CPU_TIME(t2)
+c         tp=tp+t2-t1
+c
+c       Update timesteps to recover time-centered scheme : 
+c         
+         if (ih(12).GT.0) then
+           do k = 1,gnum 
+              halfdt(k,1) = halfdt(k,2) 
+           end do   
+         end if
+c
+c     Looking for more output :
+c
+         do i = 1,gnum
+            if (tfreq(i) .gt. 0) then
+               if (mod(step,tfreq(i)) .eq. 0) call wsdata (step,i)
+                                ! save data of some stars
+                                ! see: iofunc.f
+            endif
+         enddo
+c         
+         call dostop (flag)     ! does a stop file exist ?
+c         
+c     Save all data for security if tsave flag is set :
+c     =================================================
+c
+         if (tstep .gt. 1) then
+            if (mod(step,tstep) .eq. 0) then
+               if (model .eq. 0) call convert (1)
+               call wdata          ! see: iofunc.f
+               if (flag .eq. 1) goto 10
+               if (model.eq.0) call convert (0)
+            endif
+         endif
+c
+c     Save all data if stop file exists and stop program :
+c     ====================================================
+c
+c     this is a pssibility to save the data of the run in case
+c     of a shutdown (e.g.)
+c
+         if (flag .eq. 1) then
+            if (model .eq. 0) call convert (1)
+            call wdata          ! see: iofunc.f
+            write (unit,'(a)') 
+     $           'stop - file exists....   program terminated !'
+            goto 10
+         endif
+c
+      enddo                     ! end of the time-step loop
+c
+ 10   continue
+c
+c      call CPU_TIME(time2)
+c      time2 = time2 - time1
+c      call out_time (step,cstep,time2,unit) ! not essential 
+c      tr = tr / real(step-cstep)
+c      tf = tf / real(step-cstep)
+c      tp = tp / real(step-cstep)
+c      write(unit,'(a,f20.10,a)') 'getrho:',tr,' sec/step'
+c      write(unit,'(a,f20.10,a)') 'getpxx:',tf,' sec/step'
+c      write(unit,'(a,f20.10,a)') 'pusher:',tp,' sec/step'
+c
+
+#ifdef FORT90 
+90210    format( a, es8.2, a )
+90211    format( /,a,es8.2,a,/ ) 
+#else
+90210    format( a, e8.3, a )
+90211    format( /,a,e8.3,a,/ ) 
+#endif 
+      return
+c
+      end
+c
+c******************************************************************
+c
+      subroutine out_time (step,cstep,time,unit)
+c
+c     note: this subroutine only calculates how much CPU-time 
+c           the simulation has needed ; it's not essential for
+c           the simulation, so if it doesn't work on your machine
+c           simply skip it
+c
+      integer step,cstep, unit 
+      real    time
+c
+      fdiv  = real(step) - real(cstep)
+      xtime = time
+      ih1   = int(time / 3600.0)
+      time  = time - ih1*3600.0
+      im    = int(time / 60)
+      time  = time - im*60
+      is    = int(time)
+      ihs   = int((time - is) * 100.0)
+c
+      write (unit,'(a)') ' '
+      write (unit,'(a)') '**************************
+     $     *************************'
+      write (unit,'(a,i3,a,i2,a,i2,a,i2,a)') ' CPU-time      :  ',
+     &  IH1,' h  ',IM,' m  ',IS,' s  '
+      write (unit,'(a,f7.3)') ' sec per step  :  ',xtime/fdiv
+      write (unit,'(a)') '**************************
+     $     *************************'
+      write (unit,'(a)') ' '
+c
+      return
+c
+      end
+c
+c******************************************************************
+c
+      subroutine out_error (num)
+c
+c     this routine simply prints the error-messages if something
+c     is wrong with the input data
+c
+      include 'super.cb'
+c
+      integer  num
+c
+      if (num .eq. 100) then
+         write (*,'(a)') 'Missing command line argument'
+         write (*,'(a)') 'Program terminated !!'
+      endif
+c
+      if (num.eq.101) then
+         write (unit,'(a)') 'The parameter MSTEP is smaller or equal'
+         write (unit,'(a)') 'than the current integration step !!'
+         write (unit,'(a)') 'please change MSTEP '
+         write (unit,'(a)') 
+     $        'Use <define> to set the parameters right !'
+         write (unit,'(a)') 'Program terminated !!'
+      endif
+c
+      if (num.eq.102) then
+         write (unit,'(a)') 'Timestep is less or equal 0 !'
+         write (unit,'(a)')
+     $        'Use <define> to set the parameters right !'
+         write (unit,'(a)') 'Program terminated !!'
+      endif
+      close (unit)
+      stop
+c
+      end
+c
+c******************************************************************
+c
+      subroutine convert (mode)
+c
+c     this subroutine converts all data from phsical units into
+c     model units or vice versa
+c
+      include 'super.cb'
+c
+      real    kmskpy,scm1,scl1,scv1,sct1
+      integer mode
+      integer i,j
+c
+      kmskpy = 1.02249e-6 / 1000.0 !  km/s --> kpc/yr
+c
+      scm = 1.0 / pumass
+      scl = 1.0 / pulength
+      sct = 1.0 / putime
+      scv = kmskpy * scl / sct
+c
+      if (mode.eq.0) then ! physical --> model
+         scm1 = scm
+         scl1 = scl
+         sct1 = sct
+         scv1 = scv
+      else                ! model --> physical
+         scm1 = 1.0 / scm
+         scl1 = 1.0 / scl
+         sct1 = 1.0 / sct
+         scv1 = 1.0 / scv
+      endif
+c
+      do i = 1,istno      ! transform data of all stars
+         if (star(1,i).lt.1.e10) then
+            star(1,i) = star(1,i) * scl1
+            star(2,i) = star(2,i) * scl1
+            star(3,i) = star(3,i) * scl1
+            star(4,i) = star(4,i) * scv1
+            star(5,i) = star(5,i) * scv1
+            star(6,i) = star(6,i) * scv1
+         endif
+      enddo
+c     
+      do i = 1,gnum       ! start loop for all galaxies
+c
+         fh(57,i)   = scm ! keep the transformation factors
+         fh(58,i)   = scl
+         fh(59,i)   = sct
+         fh(60,i)   = scv
+c
+         mtot(i)    = mtot(i)    * scm1    ! total mass of galaxy i
+         mass(i)    = mass(i)    * scm1    ! mass of one star
+c
+         rcore(i)   = rcore(i)   * scl1    ! grid - lengths
+         rout(i)    = rout(i)    * scl1
+         rsystem(i) = rsystem(i) * scl1
+c
+         dt(i)      = dt(i)      * sct1    ! timestep of galaxy i
+         ctime(i)   = ctime(i)   * sct1    ! current time
+c
+         do j = 1,3                        
+            gcms(j,i)  = gcms(j,i)  * scl1 ! center of mass
+            dgcms(j,i) = dgcms(j,i) * scl1 ! center of density
+         enddo
+         do j = 4,6
+            gcms(j,i)  = gcms(j,i)  * scv1
+            dgcms(j,i) = dgcms(j,i) * scv1
+         enddo
+c
+      enddo
+c      
+      return
+c
+      end
+c
+c******************************************************************
+c
+      subroutine ppara (version,cl)
+c
+c     this routine creates a log-file
+c
+      include 'super.cb'
+c
+      integer i
+      character host*32,date*26,version*(*),cl*(*),yn*3
+      character outp(12)*12
+c      
+c
+      outp(1) = ' rcore    : '
+      outp(2) = ' rout     : '
+      outp(3) = ' rsystem  : '
+      outp(4) = ' enh1     : '
+      outp(5) = ' enh2     : '
+      outp(6) = ' enh3     : '
+      outp(7) = ' enh4     : '
+      outp(8) = ' enh5     : '
+      outp(9) = ' mtot     :               '
+      outp(10) = ' mass     :              '
+      outp(11) = ' dt       : '
+c     
+      write (unit,'(a)') 'Output generated by SUPERBOX'
+      write (unit,'(a)') ' '
+      write (unit,'(a,a)') 'Version  : ',version
+      write (unit,'(a)') ' '
+c      call fdate_ (date)  ! this may not work on your machine
+c      write (unit,'(a,a)') 'Date     : ',date
+c      write (unit,'(a)') ' '
+c      call hostnm_ (host) ! this may not work on your machine
+c      write (unit,'(a,a)') 'Hostname : ',host
+c      write (unit,'(a)') ' '
+      write (unit,'(a,a)') 'Commandline argument   : ',cl
+      write (unit,'(a)') ' '
+      write (unit,'(a)') 'Control - Parameters :'
+      write (unit,'(a)') ' '
+c     
+      if (model.eq.0) then
+         write (unit,'(a)') 
+     &             'transforming physical units into model units'
+      else
+         write (unit,'(a)') 'no transformation of units required'
+      endif
+      write (unit,'(a)') '  '
+#ifdef FORT90 
+      write(unit,'(4(a,Es12.2),a)')
+#else 
+      write(unit,'(4(a,E12.3),a)')
+#endif  
+     & ' L= ',1/scl,' [kpc]; M= ',1/scm,' [Msun]; T= ',
+     & 1/sct,' [Myr]; V= ',1/scv,' [km/s]' 
+      write(unit,*)
+c
+      if (origin.eq.0) then
+         write (unit,'(a)') 'grids are focused on   : center of mass'
+      else
+         write (unit,'(a)') 'grids are focused on   : center of density'
+      endif
+      write (unit,'(a)') '  '
+c     
+      write (unit,'(a,i7)') ' Number of galaxies     : ',gnum
+      write (unit,'(a,i7)') ' Total number of stars  : ',istno
+      write (unit,'(a,i7)') ' First integration step : ',ih(3)+1
+      write (unit,'(a,i7)') ' Last  integration step : ',ih(4)
+      write (unit,'(a)') ' '
+c
+      do 10 i = 1,gnum
+c
+         write (unit,'(a)') ' '
+         write (unit,'(a,i2)') ' Galaxy No : ',i
+         write (unit,'(a)') ' '
+         write (unit,'(a,i7)') ' Number of particles    : ',gstno(i)
+         write (unit,'(a)') ' '
+         yn = 'no'
+         if (tfreq(i).gt.0) yn = 'yes'
+         write (unit,'(a,a)') 'save some data         : ',yn
+         if (tfreq(i).gt.0) then
+            write(unit,'(a,i6)') '                 start     : ',
+     $           tstart(i)
+            write(unit,'(a,i6)') '                 stop      : ',
+     $           tstop(i)
+         endif
+         write (unit,'(a)') '  '
+         write (unit,'(a,a)') '                  physical',
+     $                    '                  model'
+         write (unit,'(a)') ' '
+         write (unit,1) outp(1),rcore(i)/scl,' kpc      ',rcore(i)
+         write (unit,1) outp(2),rout(i)/scl,' kpc      ',rout(i)
+         write (unit,1) outp(3),rsystem(1)/scl,' kpc      ',rsystem(i)
+         write (unit,1) outp(4),enh1(i)/scl,'          ',enh1(i)
+         write (unit,1) outp(5),enh2(i)/scl,'          ',enh2(i)
+         write (unit,1) outp(6),enh3(i)/scl,'          ',enh3(i)
+         write (unit,1) outp(7),enh4(i)/scl,'          ',enh4(i)
+         write (unit,1) outp(8),enh5(i)/scl,'          ',enh5(i)
+         write (unit,2) outp(9),mtot(i)/scm,' Msun    ',mtot(i)
+         write (unit,2) outp(10),mass(i)/scm,' Msun    ',mass(i)
+         write (unit,1) outp(11),(dt(i)/sct)/1.e6,' Myr      ',dt(i)
+         write (unit,'(a)') ' '
+c         
+         write (unit,'(a)') 'center of mass          : '
+         write (unit,'(a,f10.5,a,f10.5,a,f10.5)') 
+     $        'gcms  = ',gcms(1,i),'  ',gcms(2,i),'  ',gcms(3,i)
+         write (unit,'(a,f10.5,a,f10.5,a,f10.5)') 
+     $        'gcms  = ',gcms(4,i),'  ',gcms(5,i),'  ',gcms(6,i)
+         write (unit,'(a)') ' '
+         if (origin.eq.1) then
+            write (unit,'(a)') 'center of density       : '
+            write (unit,'(a,f10.5,a,f10.5,a,f10.5)') 
+     $           'dcms  = ',dgcms(1,i),'  ',dgcms(2,i),'  ',dgcms(3,i)
+            write (unit,'(a,f10.5,a,f10.5,a,f10.5)') 
+     $           'dcms  = ',dgcms(4,i),'  ',dgcms(5,i),'  ',dgcms(6,i)
+         write (unit,'(a)') ' '
+         endif
+c
+ 10   continue
+c
+#ifdef FORT90
+ 1    format (a,4x,f10.5,a,4x,es10.4)
+ 2    format (a,es12.5,a,es12.5)
+#else 
+ 1    format (a,4x,f10.5,a,4x,e10.5)
+ 2    format (a,e12.6,a,e12.6)
+#endif 
+
+      return
+c     
+      end
+c
+c******************************************************************
+c     end of file
+c******************************************************************
+

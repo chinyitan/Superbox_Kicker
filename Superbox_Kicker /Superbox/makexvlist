@@ -1,0 +1,68 @@
+# File makexvlist : setsup an input list for readxv
+# usage : makexvlist run_name galaxy_number output_frequency
+# 
+if ($#argv > 0) then
+ set filename = $argv[1] 
+ echo Generic filename is $filename
+ if ( $#argv < 2 ) then 
+   echo .. but need two arguments, run name and galaxy number 
+   exit 0 
+ endif 
+else
+ echo no file to scan  ...!
+ exit 0
+endif   
+     
+set xvname = $filename-g0$argv[2] 
+echo $xvname 
+
+# Check that there are entries for this galaxy .. 
+set n_counts = `ls -l $xvname* > outputfile ; wc -l outputfile`
+if( $n_counts[1] < 1 ) then 
+    echo no file for galaxy $argv[2] ...!
+ exit 0
+endif   
+     
+set xvname = $filename-g0$argv[2]\* 
+
+#   Setup a rough list first : 
+
+if( -e list.of.xv.files ) rm list.of.xv.files 
+
+foreach file ($xvname) 
+	echo $file >> list.of.xv.files 
+end 
+
+set xvname = $filename-g0$argv[2]\* 
+
+# Check for .dtens and .itens files in the list - 
+
+cat list.of.xv.files | egrep -in '(itens|dtens)'  > outputfile ;
+set n_counts = `wc -l outputfile`
+
+# If positive, remove appropriate file names - always at the bottom 
+
+if( $n_counts[1] > 0   ) then 
+
+ echo found $n_counts[1] intruders in the list, continuing   
+ set filesize = `wc -l list.of.xv.files`
+ @ x = ( $filesize[1] - $n_counts[1] ) 
+ head -$x list.of.xv.files > outputfile ; mv outputfile list.of.xv.files
+
+endif 
+
+# Run executable - data saved in fort.63 (ascii format) 
+
+set num_freq = 1 
+if( $#argv > 2 ) then 
+  set num_freq = $argv[3] 
+endif 
+echo $filename > inputfile;  echo $num_freq >> inputfile; echo 1 >> inputfile;
+
+cat inputfile 
+
+if( -e fort.63 ) rm fort.63 
+
+./readxv.x  < inputfile ; rm inputfile 
+
+echo ascii output in fort.63 - Script ended normally 

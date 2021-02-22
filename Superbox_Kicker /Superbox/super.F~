@@ -1,0 +1,259 @@
+c
+c     VERSION 3.1   VERSION 3.1   VERSION 3.1  VERSION 3.1
+c
+c     The following files belong to this program :
+c      1. super.f
+c      2. fft.f
+c      3. getrho.f
+c      4. getxx.f
+c      5. geth.f
+c      6. pusher.f
+c      7. eval.f
+c      8. iofunc.f
+c     10. super.cb (includes all common blocks)
+c
+c
+      program superb
+c
+      include 'super.cb'
+c
+      integer    i,j,l,ijk, nh, io_stat  
+      integer    cstep,mstep, number_files
+      real       pinh,w1,w2
+      real       rho1_ref, rho1, dummy  
+      real       dt_check
+      character  version*50,comline*50,logfile*100
+      character  expon1*100,expon*6
+      logical    ex 
+c
+      version = '3.1'
+c
+      do i = 1,100
+         fname(i:i)   = ' '
+         logfile(i:i) = ' '
+      enddo
+c
+c     Read name of simulation out of file 'name.inp' :
+c     ============================================
+c
+      open (98,file='name.inp')
+
+      read (98,* ) number_files 
+      print*,number_files 
+      do ijk = 1, number_files 
+
+      read (98,'(a)') fname
+      print*, fname
+c
+      if (fname(1:1) .eq. ' ') call out_error (100)
+      comline = fname
+c
+c     Open log-file for information about the simulation run :
+c     ========================================================
+c
+      call makeext (fname,logfile,'.log') 
+
+c++   new addition compatible with fortran 90 : (rid of 'append')
+#ifdef FORT90  
+      inquire (file=logfile,exist=ex)     
+       if( ex .eqv. .true. ) then
+c            Forward to end-of-file 
+       open(unit,file=logfile,access='sequential',status='old')
+90210  read(unit,*, iostat=io_stat,err = 90210, end = 90211 ) dummy 
+       if( io_stat .ge. 0 ) go to 90210 
+90211  backspace unit 
+      else 
+       open (unit,file=logfile,access='sequential',status='new')
+      endif 
+#else
+       open(unit,file=logfile,access='append',status='unknown') 
+#endif 
+c
+c     Read data of simulation out of xxx.CONT file :
+c     ==============================================
+c
+      call rdata        
+      write( 6,* ) ' out of rdata ' 
+c
+c     Integer-Header, the same for all galaxies :
+c     ===========================================
+c
+      gnum   = ih(1)    ! number of galaxies
+      istno  = ih(2)    ! total number of stars
+      cstep  = ih(3)+1  ! current integrationstep
+      mstep  = ih(4)    ! last integrationstep
+      model  = ih(5)    ! 0 physical units; 1 model units
+      origin = ih(6)    ! 0 center of mass; 1 center of density
+      tstep  = ih(7)    ! > 0 Save ih(7)'th step *.CONT data
+      backup = ih(10)   ! flag for additional backup-files
+c
+      if (cstep .ge. mstep) call out_error (101)
+      call  set_scales( 1,ih,fh )
+
+      write(6,* ) ' out of set_scales ' 
+
+c
+c     Real-Header, for each individual galaxy :
+c     =========================================
+c
+      do i = 1,gnum
+c
+         rcore(i)   = fh(1,i)       ! radius inner grid
+         rout(i)    = fh(2,i)       ! radius medium grid
+         rsystem(i) = fh(3,i)       ! radius outer grid
+c
+c     note: fh(3) should be the same for all galaxies
+c
+         dt(i)      = fh(4,i)       ! timestep for galaxy i
+c
+c     Note: fh(4,i) should be the same for all galaxies. 
+c
+         mtot(i)    = fh(5,i)       ! total mass of galaxy i
+         gstno(i)   = int(fh(6,i))  ! number of stars in galaxy i
+         grest(i)   = int(fh(7,i))  ! stars left in simulation
+c
+         do j = 1,6
+            gcms(j,i)  = fh(7+j,i)  ! center of mass
+            dgcms(j,i) = fh(13+j,i) ! center of density
+         enddo
+c
+         ctime(i)   = fh(20,i)      ! current time
+
+c     data for additional output
+c
+         tfreq(i)   = int(fh(21,i)) ! > 0 save data every tfreq'th 
+                                    ! step
+         tstart(i)  = int(fh(22,i)) ! first star to be saved
+         tstop(i)   = int(fh(23,i)) ! last star to be saved
+
+         tifreq(i)  = int(fh(24,i)) ! > 0 calculate itens
+         frmaxi(i)  = int(fh(25,i)) ! if 1 ramxi is a length else rmaxi 
+                                    ! in % of all stars in galaxy i
+         rmaxi(i)   =      fh(26,i) ! rmax for itens
+
+         tdfreq(i)  = int(fh(27,i)) ! > 0 calculate dtens
+         frmaxd(i)  = int(fh(28,i)) ! if 1 rmaxd is a length else rmaxd 
+                                    ! in % of all stars in galaxy i
+         rmaxd(i)   =     fh(29,i)  ! rmax for dtens
+c
+         if (gstno(i).gt.0) mass(i) = mtot(i) / real(gstno(i))
+                                    ! mass of single star
+c
+         if (dt(i) .le. 0.0) call out_error (102)
+c
+      enddo
+
+      if( model .eq. 0 ) call convert (0) ! .. if input data in physical units. 
+
+      flag = 0
+
+c     Setting up grid parameters :
+c     ============================
+c
+      do i = 1,gnum
+
+         enh1(i) = (n/2-2) / rout(i)
+         enh2(i) = (n/2-2) / rout(i)
+         enh3(i) = (n/2-2) / rcore(i)
+         enh4(i) = (n/2-2) / rsystem(i)
+         enh5(i) = (n/2-2) / rsystem(i)
+      enddo
+
+c
+c     Generating log-file :
+c     =====================
+c
+      call ppara (version,comline)
+c
+c     Initialisation of all constants and variables :
+c     ===============================================
+c
+      pi     = 4. * atan(1.)
+      nh     = n/2
+      pinh   = pi / real(nh)
+      w1     =  cos(pinh)
+      w2     = -sin(pinh)
+      wr(1)  = 1.
+      wi(1)  = 0.
+c
+      do j = 2,nh
+         l      = j-1
+         wr(j)  = w1*wr(l) - w2*wi(l)
+         wi(j)  = w2*wr(l) + w1*wi(l)
+      enddo
+c
+      theta  =  -(pi) / real(n)
+      wpr    =  -2. * sin(0.5*theta) * sin(0.5*theta)
+      wpi    =  sin(theta)
+      wi1(2) = wpi
+      wr1(2) = 1.0 + wpr
+c
+      do i = 3,(nh+1)
+         wr1(i) = wr1(i-1)*wpr - wi1(i-1)*wpi + wr1(i-1)
+         wi1(i) = wi1(i-1)*wpr + wr1(i-1)*wpi + wi1(i-1)
+      enddo
+c
+      n2p3   =  2*n+3
+      c1     =  0.5
+      c2     =  0.5
+c      
+      output = 0
+c
+      tmass = 0.0
+      do j = 1,6
+         tcms(j) = 0.0
+      enddo
+      do i = 1,gnum
+         tmass = tmass + mass(i)*grest(i)
+         do j = 1,6
+            tcms(j) = tcms(j) + mass(i) * grest(i) * gcms(j,i)
+         enddo
+      enddo
+      do j = 1,6
+         tcms(j) = tcms(j) / tmass
+      enddo
+
+c
+c     Now start the Main program :
+c     ============================
+
+      write( 6,* ) ' entering master .. ' 
+
+      call master (cstep,mstep)       ! this is the main program
+
+c     Save all data after the last step is reached :
+c     ==============================================
+
+      if (flag .ne. 1) then
+         call wdata  
+      else 
+         write( unit,* ) ' End of computation - flag = 1, stop' 
+         stop 
+      endif
+
+      close (unit)
+
+      end do             ! End iterations over number of files. 
+
+      close (98)
+      end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
